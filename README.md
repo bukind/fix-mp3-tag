@@ -43,3 +43,7 @@ $GOPATH/bin/fix-mp3-tag <mp3file>...
 
 The program will try to decode the id3 tags of the mp3 using the
 combination of the cp1251 and iso8859-1 encodings.
+
+## License
+
+GPL-3
