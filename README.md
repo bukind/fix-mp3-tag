@@ -2,13 +2,13 @@
 
 ## About
 
-A lot of Cyrillic mp3's are broken by f%&amp;king windows encoding.
+A lot of Cyrillic mp3 tags are broken by f%&amp;king windows encoding.
 This binary will try to fix this.
 
 
 ## Dependency
 
-You need id3info and id3tag applications, usually they are part of id3lib package for most Linux distribution.
+It is written in Go, based on github.com/bogem/id3v2 library.
 To install you need a git client, and a go compiler to build.
 
 ## Installation
@@ -24,7 +24,7 @@ To install you need a git client, and a go compiler to build.
 
   ```
   cd $GOPATH
-  git clone https://github.com/bukind/fix-mp3-tag.git src/bukind/fix-mp3-tag
+  git clone https://github.com/bukind/fix-mp3-tag.git src/github.com/bukind/fix-mp3-tag
   ```
 
 * install the binary:
@@ -37,12 +37,23 @@ To install you need a git client, and a go compiler to build.
 
 ## Usage
 
+By default the program runs in a dry-run mode:
+
 ```
 $GOPATH/bin/fix-mp3-tag <mp3file>...
 ```
 
 The program will try to decode the id3 tags of the mp3 using the
-combination of the cp1251 and iso8859-1 encodings.
+combination of the cp1251 and iso8859-1 encodings and print what it is
+going to write back.
+
+Then, you can run it to actually write those tags back:
+
+```
+$GOPATH/bin/fix-mp3-tag -w <mp3file>...
+```
+
+There is a verbosity flag `-v=INT` to see some debugging messages.
 
 ## License
 
