@@ -10,20 +10,9 @@ import (
 	"strings"
 )
 
-// The list of supported tags, get more of them from
-// https://pkg.go.dev/github.com/bogem/id3v2/v2#pkg-variables.
 var (
 	verbose = flag.Int("v", 0, "Increase verbosity")
 	doWrite = flag.Bool("w", false, "Write converted frames back")
-
-	supportedTags = []string{
-		"Artist",
-		"Content type",
-		"Title",
-		"Content group description",
-		"Band",
-		"Album",
-	}
 )
 
 // check if the argument is UTF-8
@@ -91,13 +80,28 @@ func dump(in string) string {
 // Extract supported frames into a map.
 func extractFrames(tag *id3v2.Tag) (map[string]id3v2.TextFrame, error) {
 	out := make(map[string]id3v2.TextFrame)
-	for _, t := range supportedTags {
-		tf := tag.GetTextFrame(tag.CommonID(t))
-		if tf.Text != "" {
-			if *verbose > 1 {
-				fmt.Printf(" tag %s found, encoding %v, text: %s\n", t, tf.Encoding, dump(tf.Text))
+	// Get all frames
+	for key, framers := range tag.AllFrames() {
+		for _, frame := range framers {
+			tf, ok := frame.(id3v2.TextFrame)
+			if !ok {
+				// This is not a text frame.
+				// Since a single key cannot have different types of framers, we can break here.
+				break
 			}
-			out[t] = tf
+			if tf.Text == "" {
+				continue
+			}
+			// Check that we only have a single text frame.
+			if len(framers) > 1 && *verbose > 0 {
+				fmt.Printf(" Warning: the text tag %q has %d frames: %v\n", key, len(framers), framers)
+				// We are going to use this frame anyway.
+			}
+			if *verbose > 1 {
+				fmt.Printf(" tag %s found, encoding %v, text: %s\n", key, tf.Encoding, dump(tf.Text))
+			}
+			out[key] = tf
+			break
 		}
 	}
 	return out, nil
@@ -174,7 +178,7 @@ func convertFrames(frames map[string]id3v2.TextFrame) map[string]id3v2.TextFrame
 // Save frames back into mp3.
 func saveFrames(tag *id3v2.Tag, frames map[string]id3v2.TextFrame) error {
 	for key, tf := range frames {
-		tag.AddTextFrame(tag.CommonID(key), tf.Encoding, tf.Text)
+		tag.AddTextFrame(key, tf.Encoding, tf.Text)
 	}
 	return tag.Save()
 }
