@@ -15,15 +15,18 @@ var (
 	doWrite = flag.Bool("w", false, "Write converted frames back")
 )
 
-// check if the argument is UTF-8
-func isUtf(s string) bool {
-	_, _, err := encoding.UTF8Validator.Transform([]byte(s), []byte(s), true)
-	return err == nil
-}
-
-// check if the argument is Russian cyrillic utf-8 chars
-func isCyr(s string) bool {
+// The function counts the ratio of the correct UTF8 Cyrillic characters to the string length, in range [0..1].
+// For empty string it returns 1.
+// If the input is not UTF8, it returns 0.
+func countCyr(s string) float64 {
+	// Check that the input is UTF8.
+	if _, _, err := encoding.UTF8Validator.Transform([]byte(s), []byte(s), true); err != nil {
+		return 0
+	}
+	bad := 0
+	total := 0
 	for _, c := range s {
+		total++
 		switch {
 		case 0 <= c && c <= 0x7f:
 			// ascii
@@ -32,10 +35,13 @@ func isCyr(s string) bool {
 		case c == 0x401 || c == 0x451:
 			// yo
 		default:
-			return false
+			bad++
 		}
 	}
-	return true
+	if total == 0 {
+		return 1
+	}
+	return float64(total-bad) / float64(total)
 }
 
 // the interface similar to that of encoding.Decoder and encoding.Encoder
@@ -63,11 +69,12 @@ func decode(src string, tlist ...StringTrans) (string, error) {
 		}
 		src = dst
 	}
-	if isUtf(src) && isCyr(src) {
+	goodness := countCyr(src)
+	if goodness >= 1 {
 		return src, nil
 	}
 	if *verbose > 1 {
-		fmt.Printf("  failed (bad result)!\n")
+		fmt.Printf("  failed (bad result %f)!\n", goodness)
 	}
 	return "", fmt.Errorf("bad result of conversion")
 }
@@ -134,7 +141,7 @@ func convertFrames(frames map[string]id3v2.TextFrame) map[string]id3v2.TextFrame
 		}
 
 		value := strings.TrimSpace(tf.Text)
-		if isUtf(value) && isCyr(value) {
+		if countCyr(value) >= 1 {
 			// already normal tag
 			if *verbose > 1 {
 				fmt.Printf(" frame %v is already normal\n", tf)
