@@ -53,7 +53,20 @@ Then, you can run it to actually write those tags back:
 $GOPATH/bin/fix-mp3-tag -w <mp3file>...
 ```
 
-There is a verbosity flag `-v=INT` to see some debugging messages.
+If some tags cannot be converted there will be a warning in the output.
+Typically it can be either because the conversion could not find any
+suitable result, or because there are too many suitable results.
+The warning would contain a goodness value of the best result in range [0..1].
+If the value is closer to 1, you can try to rerun the program with lower
+threshold to see if it works.  It is recommended to do that in a
+dry-run mode first, to see what would be the result:
+
+```
+$GOPATH/bin/fix-mp3-tag -t=0.8 <mp3file>...
+```
+
+There is also a verbosity flag `-v` to see some debugging messages.
+Use larger values to have more detailed output, e.g. `-v=2`.
 
 ## License
 

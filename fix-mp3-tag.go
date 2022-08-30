@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	verbose = flag.Int("v", 0, "Increase verbosity")
-	doWrite = flag.Bool("w", false, "Write converted frames back")
+	verbose   = flag.Int("v", 0, "Increase verbosity")
+	doWrite   = flag.Bool("w", false, "Write converted frames back")
+	threshold = flag.Float64("t", 1, "Conversion threshold.  If some fields cannot be converted, try lower values, e.g. 0.8")
 )
 
 // The function counts the ratio of the correct UTF8 Cyrillic characters to the string length, in range [0..1].
@@ -59,7 +60,7 @@ func decode(src string, tlist ...StringTrans) (string, error) {
 			dst, err = f.String(src2)
 			if err != nil {
 				if *verbose > 1 {
-					fmt.Printf("  failed!\n")
+					fmt.Printf("  failed: %v\n", err)
 				}
 				return "", err
 			}
@@ -69,14 +70,7 @@ func decode(src string, tlist ...StringTrans) (string, error) {
 		}
 		src = dst
 	}
-	goodness := countCyr(src)
-	if goodness >= 1 {
-		return src, nil
-	}
-	if *verbose > 1 {
-		fmt.Printf("  failed (bad result %f)!\n", goodness)
-	}
-	return "", fmt.Errorf("bad result of conversion")
+	return src, nil
 }
 
 // Show the string with both symbol and hex representation.
@@ -84,7 +78,7 @@ func dump(in string) string {
 	return fmt.Sprintf("%q [% x]", in, []byte(in))
 }
 
-// Extract supported frames into a map.
+// Extract potential frames to convert into a map.
 func extractFrames(tag *id3v2.Tag) (map[string]id3v2.TextFrame, error) {
 	out := make(map[string]id3v2.TextFrame)
 	// Get all frames
@@ -101,11 +95,25 @@ func extractFrames(tag *id3v2.Tag) (map[string]id3v2.TextFrame, error) {
 			}
 			// Check that we only have a single text frame.
 			if len(framers) > 1 && *verbose > 0 {
-				fmt.Printf(" Warning: the text tag %q has %d frames: %v\n", key, len(framers), framers)
+				fmt.Printf(" Warning: the text tag %q has %d frames\n", key, len(framers))
 				// We are going to use this frame anyway.
 			}
+			if !tf.Encoding.Equals(id3v2.EncodingISO) {
+				// We don't have to convert non-ISO frames.
+				if *verbose > 1 {
+					fmt.Printf(" frame %q encoding is not ISO, skipping\n", key)
+				}
+				continue
+			}
+			if countCyr(strings.TrimSpace(tf.Text)) >= 1 {
+				// If the result is already correct, skip it as well.
+				if *verbose > 1 {
+					fmt.Printf(" frame %q => %v is already correct\n", key, tf)
+				}
+				continue
+			}
 			if *verbose > 1 {
-				fmt.Printf(" tag %s found, encoding %v, text: %s\n", key, tf.Encoding, dump(tf.Text))
+				fmt.Printf(" frame %q found, encoding %v, text: %s\n", key, tf.Encoding, dump(tf.Text))
 			}
 			out[key] = tf
 			break
@@ -118,37 +126,27 @@ func extractFrames(tag *id3v2.Tag) (map[string]id3v2.TextFrame, error) {
 // Only those that can be converted are returned.
 func convertFrames(frames map[string]id3v2.TextFrame) map[string]id3v2.TextFrame {
 	out := make(map[string]id3v2.TextFrame)
+
+	win := charmap.Windows1251.NewDecoder()
+	enc := charmap.Windows1251.NewEncoder()
+	iso := charmap.ISO8859_1.NewEncoder()
+
+	combinations := []struct {
+		name  string
+		tlist []StringTrans
+	}{
+		{"win", []StringTrans{win}},
+		{"enc-iso-win", []StringTrans{enc, iso, win}},
+		{"iso-win", []StringTrans{iso, win}},
+		{"iso", []StringTrans{iso}}, // for incorrect encoding field.
+	}
+
 	for key, tf := range frames {
-		if !tf.Encoding.Equals(id3v2.EncodingISO) {
-			if *verbose > 1 {
-				fmt.Printf(" frame %v encoding is not ISO, skipping\n", tf)
-			}
-			continue
+		if *verbose > 1 {
+			fmt.Printf(" ------------------\n processing frame %q...\n", key)
 		}
-
-		win := charmap.Windows1251.NewDecoder()
-		enc := charmap.Windows1251.NewEncoder()
-		iso := charmap.ISO8859_1.NewEncoder()
-
-		combinations := []struct {
-			name  string
-			tlist []StringTrans
-		}{
-			{"win", []StringTrans{win}},
-			{"enc-iso-win", []StringTrans{enc, iso, win}},
-			{"iso-win", []StringTrans{iso, win}},
-			{"iso", []StringTrans{iso}}, // for incorrect encoding field.
-		}
-
 		value := strings.TrimSpace(tf.Text)
-		if countCyr(value) >= 1 {
-			// already normal tag
-			if *verbose > 1 {
-				fmt.Printf(" frame %v is already normal\n", tf)
-			}
-			continue
-		}
-
+		best := 0.0
 		var newvals []string
 		for _, cmb := range combinations {
 			if *verbose > 1 {
@@ -158,25 +156,31 @@ func convertFrames(frames map[string]id3v2.TextFrame) map[string]id3v2.TextFrame
 			if err != nil {
 				continue
 			}
+			goodness := countCyr(val)
+			if goodness > best {
+				best = goodness
+			}
+			if goodness < *threshold {
+				if *verbose > 1 {
+					fmt.Printf("  failed (bad result %f)!\n", goodness)
+				}
+				continue
+			}
 			if *verbose > 1 {
-				fmt.Printf(" frame %v converted to %q\n", tf, val)
+				fmt.Printf(" frame %q converted to %q, goodness %f\n", key, val, goodness)
 			}
 			newvals = append(newvals, val)
 		}
 		switch len(newvals) {
 		case 0:
-			if *verbose > 1 {
-				fmt.Printf(" could not convert frame %s\n", key)
-			}
+			fmt.Printf(" Warning: could not convert frame %s, best result is %f\n", key, best)
 		case 1:
 			out[key] = id3v2.TextFrame{
 				Encoding: id3v2.EncodingUTF8,
 				Text:     newvals[0],
 			}
-		case 2:
-			if *verbose > 1 {
-				fmt.Printf(" ambiguous conversion for frame %s -- possible results: %v", key, newvals)
-			}
+		default:
+			fmt.Printf(" Warning: ambiguous conversion for frame %s -- got %d possible results, best is %f\n", key, len(newvals), best)
 		}
 	}
 	return out
@@ -205,13 +209,13 @@ func processFile(path string) error {
 		return err
 	}
 	if *verbose > 0 {
-		fmt.Printf(" frames found: %v\n", frames)
+		fmt.Printf(" %d frames to convert found\n", len(frames))
 	}
 
 	frames = convertFrames(frames)
 	if len(frames) == 0 {
 		if *verbose > 0 {
-			fmt.Printf(" no broken frames found, nothing to write back\n")
+			fmt.Printf(" cannot convert any frames, nothing to write back\n")
 		}
 		return nil
 	}
@@ -228,6 +232,11 @@ func processFile(path string) error {
 
 func main() {
 	flag.Parse()
+	if *threshold < 0.1 || *threshold > 1 {
+		fmt.Fprintf(os.Stderr, "Invalid value of threshold (%f), must be in range [0.1, 1]\n", *threshold)
+		os.Exit(1)
+	}
+
 	if !*doWrite && *verbose <= 0 {
 		// In a dry-run mode we'd like to see at least some output.
 		*verbose = 1
